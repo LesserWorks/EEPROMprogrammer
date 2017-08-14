@@ -1,9 +1,16 @@
+#include <avr/io.h>
+#include <util/delay_basic.h>
+#include <stdint.h>
 #define SHIFT_DATA 2
 #define SHIFT_CLK 3
 #define SHIFT_LATCH 4
 #define EEPROM_D0 5
 #define EEPROM_D7 12
 #define WRITE_EN 13
+#define WE_high() PORTD |= 1 << 5;
+#define WE_low() PORTD &= ~(1 << 5);
+#define OE_high() PORTD |= 1 << 7;
+#define OE_low() PORTD &= ~(1 << 7);
 /*
 Using Arduino Nano
 Reg 1 has A0-A7 in QA-QH
@@ -22,6 +29,11 @@ D7 -> 12
 */
 
 // Pins required: 15 address lines, 8 data lines, WE, OE
+// Use PORTC for data, PORTB for A0-A7, PORTA<0..6> for A8-A14
+// PORTD5 will be WE
+// PORTD7 will be OE
+// 32,768 bytes in AT28C256
+#if 0
 void setAddress(int address, bool outputEnable) {
   shiftOut(SHIFT_DATA, SHIFT_CLK, MSBFIRST, (address >> 8) | (outputEnable ? 0x00 : 0x80)); // 0b10000000 MSB set
   // This puts A8-A14 and OE state on reg 2
@@ -33,6 +45,7 @@ void setAddress(int address, bool outputEnable) {
   digitalWrite(SHIFT_LATCH, HIGH);
   digitalWrite(SHIFT_LATCH, LOW);
 }
+#endif
 // Keep CE always low
 // During read, OE must be low to allow data to be output, and WE must be high
 // During write, OE is high, WE pulses low, then high. WE must stay low for at least 100ns
@@ -41,7 +54,7 @@ void setAddress(int address, bool outputEnable) {
 // 10ms to complete page write
 // To erase entire chip, AA to 5555, 55 to 2AAA, 80 to 5555, AA to 5555, 55 to 2AAA, 10 to 5555, then wait 20ms
 // Just like a page write
-// While write is in progress, you can put WE and OE, and keep last used address on bus. Then toggle OE low and high,
+// While write is in progress, you can put WE and OE high, and keep last used address on bus. Then toggle OE low and high,
 // During each toggle, IO pin 7 will output the opposite of what was last written to it until write is finished, 
 // then it will output actual bit like a regular read. Also, IO pin 6 will keep toggling until write is finished,
 // then it stops toggling.
@@ -49,6 +62,7 @@ void setAddress(int address, bool outputEnable) {
 /*
  * Read a byte from the EEPROM at the specified address.
  */
+#if 0
 byte readEEPROM(int address) {
   for (int pin = EEPROM_D0; pin <= EEPROM_D7; pin += 1) {
     pinMode(pin, INPUT);
@@ -61,11 +75,55 @@ byte readEEPROM(int address) {
   }
   return data;
 }
+#endif
+void eeSetup(void)
+{
+  DDRA = 255; // Address bus is output
+  DDRB = 255;
+  DDRC = 0; // Data bus starts as input
+  DDRD |= (1 << 5) | (1 << 7); // OE and WE are outputs
+  OE_low();
+  WE_high();
+}
+uint8_t eeReadByte(const uint16_t addr)
+{
+  PORTA = addr >> 8; // High
+  PORTB = addr & 255; // Low
+  _delay_loop_2(2); // Delays at least 8 CPU cycles to ensure at least 350ns pass even with 20MHz clock
+  return PORTC; // Read data bus
+}
+void eeWriteByte(const uint16_t addr, const uint8_t data)
+{
+  DDRC = 255; // Data bus is output
+  OE_high();
+  PORTA = addr >> 8;
+  PORTB = addr & 255;
+  PORTC = data;
+  WE_low();
+  WE_low(); // Has effect of delaying for 2 clock cycles so WE stays low for at least 100ns
+  WE_high();
+  DDRC = 0; // Data bus is input to enable polling
+  OE_low();
+  OE_low(); // Delay 2 cycles
+  do
+  {
+    prev = PINC & (1 << 6);
+    OE_high();
+    _delay_loop_1(1); // Delay 3 cycles
+    OE_low();
+    OE_low(); // Delays for 2 clock cycles to IO6 is not read for at least 100ns
+  }
+  while(prev ^ (PINC & (1 << 6))); // True when PINC<6> and prev<6> have different values
+  return;
+}
+  
+
 
 
 /*
  * Write a byte to the EEPROM at the specified address.
  */
+#if 0
 void writeEEPROM(int address, byte data) {
   setAddress(address, /*outputEnable*/ false); // OE high
   for (int pin = EEPROM_D0; pin <= EEPROM_D7; pin += 1) {
@@ -81,7 +139,7 @@ void writeEEPROM(int address, byte data) {
   digitalWrite(WRITE_EN, HIGH);
   delay(10);
 }
-
+#endif
 
 /*
  * Read the contents of the EEPROM and print them to the serial monitor.
