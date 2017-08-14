@@ -4,20 +4,48 @@
 #define EEPROM_D0 5
 #define EEPROM_D7 12
 #define WRITE_EN 13
-
 /*
- * Output the address bits and outputEnable signal using shift registers.
- */
+Using Arduino Nano
+Reg 1 has A0-A7 in QA-QH
+Reg 2 has A8-A14 on QA-QG, then OE on QH
+They are cascaded, reg 1 --> reg 2.
+Serial in is 2, clock is 3, latch is 4. WE goes to 13, CE to GND
+EEPROM to Nano connections:
+D0 -> 5
+D1 -> 6
+D2 -> 7
+D3 -> 8
+D4 -> 9
+D5 -> 10
+D6 -> 11
+D7 -> 12
+*/
+
+// Pins required: 15 address lines, 8 data lines, WE, OE
 void setAddress(int address, bool outputEnable) {
-  shiftOut(SHIFT_DATA, SHIFT_CLK, MSBFIRST, (address >> 8) | (outputEnable ? 0x00 : 0x80));
+  shiftOut(SHIFT_DATA, SHIFT_CLK, MSBFIRST, (address >> 8) | (outputEnable ? 0x00 : 0x80)); // 0b10000000 MSB set
+  // This puts A8-A14 and OE state on reg 2
+  // If outputEnable is true, OE is low, high otherwise
   shiftOut(SHIFT_DATA, SHIFT_CLK, MSBFIRST, address);
+  // This puts A0-A7 on reg 1.
 
   digitalWrite(SHIFT_LATCH, LOW);
   digitalWrite(SHIFT_LATCH, HIGH);
   digitalWrite(SHIFT_LATCH, LOW);
 }
-
-
+// Keep CE always low
+// During read, OE must be low to allow data to be output, and WE must be high
+// During write, OE is high, WE pulses low, then high. WE must stay low for at least 100ns
+// To page write, put address and data on bus, pulse WE, put new address and data, pulse WE etc.
+// A6-A14 must be constant during page write, A0-A5 can change to specifiy any 64 byte region.
+// 10ms to complete page write
+// To erase entire chip, AA to 5555, 55 to 2AAA, 80 to 5555, AA to 5555, 55 to 2AAA, 10 to 5555, then wait 20ms
+// Just like a page write
+// While write is in progress, you can put WE and OE, and keep last used address on bus. Then toggle OE low and high,
+// During each toggle, IO pin 7 will output the opposite of what was last written to it until write is finished, 
+// then it will output actual bit like a regular read. Also, IO pin 6 will keep toggling until write is finished,
+// then it stops toggling.
+// During successive reads or writes, no need to toggle OE
 /*
  * Read a byte from the EEPROM at the specified address.
  */
@@ -25,7 +53,7 @@ byte readEEPROM(int address) {
   for (int pin = EEPROM_D0; pin <= EEPROM_D7; pin += 1) {
     pinMode(pin, INPUT);
   }
-  setAddress(address, /*outputEnable*/ true);
+  setAddress(address, /*outputEnable*/ true); // OE low
 
   byte data = 0;
   for (int pin = EEPROM_D7; pin >= EEPROM_D0; pin -= 1) {
@@ -39,7 +67,7 @@ byte readEEPROM(int address) {
  * Write a byte to the EEPROM at the specified address.
  */
 void writeEEPROM(int address, byte data) {
-  setAddress(address, /*outputEnable*/ false);
+  setAddress(address, /*outputEnable*/ false); // OE high
   for (int pin = EEPROM_D0; pin <= EEPROM_D7; pin += 1) {
     pinMode(pin, OUTPUT);
   }
